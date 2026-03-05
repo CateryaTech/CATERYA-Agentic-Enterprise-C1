@@ -1,0 +1,218 @@
+version: "3.9"
+
+# ── CATERYA Enterprise v2 — Full Stack + Monitoring ──────────────────────────
+# Author  : Ary HH <cateryatech@proton.me>
+# Run     : docker-compose up -d
+# Env     : cp .env.example .env && fill values
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # INFRASTRUCTURE
+  # ─────────────────────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: caterya_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-caterya}
+      POSTGRES_USER:     ${POSTGRES_USER:-caterya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-caterya}"]
+      interval: 10s; timeout: 5s; retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: caterya_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s; timeout: 5s; retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: caterya_ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s; timeout: 10s; retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # APPLICATION
+  # ─────────────────────────────────────────────────────────────────────────
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: caterya_app
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    environment:
+      DATABASE_URL:          postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL:             redis://:${REDIS_PASSWORD}@redis:6379/0
+      JWT_SECRET_KEY:        ${JWT_SECRET_KEY}
+      OLLAMA_BASE_URL:       http://ollama:11434
+      GROQ_API_KEY:          ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY:    ${OPENROUTER_API_KEY:-}
+      TOGETHER_API_KEY:      ${TOGETHER_API_KEY:-}
+      FIREWORKS_API_KEY:     ${FIREWORKS_API_KEY:-}
+      SUPABASE_URL:          ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY:     ${SUPABASE_ANON_KEY:-}
+      AUTH0_DOMAIN:          ${AUTH0_DOMAIN:-}
+      AUTH0_CLIENT_ID:       ${AUTH0_CLIENT_ID:-}
+      STRIPE_SECRET_KEY:     ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      ENVIRONMENT:           ${ENVIRONMENT:-production}
+      LOG_LEVEL:             ${LOG_LEVEL:-INFO}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./logs:/app/logs
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: caterya_api
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    environment:
+      DATABASE_URL:       postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL:          redis://:${REDIS_PASSWORD}@redis:6379/0
+      JWT_SECRET_KEY:     ${JWT_SECRET_KEY}
+      OLLAMA_BASE_URL:    http://ollama:11434
+      GROQ_API_KEY:       ${GROQ_API_KEY:-}
+      STRIPE_SECRET_KEY:  ${STRIPE_SECRET_KEY:-}
+    ports:
+      - "8000:8000"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # MONITORING
+  # ─────────────────────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: caterya_prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules.yml:/etc/prometheus/rules/rules.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: caterya_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER:     ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-changeme}
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+      GF_SERVER_ROOT_URL:         http://localhost:3000
+      GF_INSTALL_PLUGINS:         "grafana-piechart-panel,grafana-clock-panel"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: caterya_alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    environment:
+      SMTP_HOST:     ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_USER:     ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    ports:
+      - "9093:9093"
+
+  # ── Exporters ──────────────────────────────────────────────────────────
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: caterya_pg_exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.61.0
+    container_name: caterya_redis_exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR:     redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+    depends_on:
+      - redis
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NGINX
+  # ─────────────────────────────────────────────────────────────────────────
+
+  nginx:
+    image: nginx:alpine
+    container_name: caterya_nginx
+    restart: unless-stopped
+    depends_on: [app, api]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+networks:
+  default:
+    name: caterya_network

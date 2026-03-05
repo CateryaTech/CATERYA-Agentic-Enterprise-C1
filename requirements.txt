@@ -1,0 +1,72 @@
+# ── CATERYA Enterprise — Dependencies ────────────────────────────────────────
+# Standalone: NO external 'pip install caterya' dependency
+# Framework code is included in src/caterya/
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# ── LangGraph + LangChain ─────────────────────────────────────────────────────
+langgraph>=0.1.0
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langchain-openai>=0.1.0           # ChatOpenAI — used for Groq/OpenRouter/Together/Fireworks/Gemini
+
+# ── Google Gemini ─────────────────────────────────────────────────────────────
+# Gemini uses OpenAI-compat endpoint — no extra package needed for basic use.
+# Install below for native ChatGoogleGenerativeAI support (more reliable):
+langchain-google-genai>=1.0.0     # ChatGoogleGenerativeAI (gemini-2.0-flash, gemini-1.5-pro)
+google-generativeai>=0.7.0        # Google GenAI SDK
+
+# ── Ollama — primary models: qwen3.5 (text) + qwen3-vl (vision) ──────────────
+# Native SDK: from ollama import chat
+# response = chat(model='qwen3.5', messages=[{'role':'user','content':'Hello!'}])
+# print(response.message.content)
+ollama>=0.3.0                     # Native Ollama Python SDK
+langchain-ollama>=0.2.0           # LangChain ChatOllama wrapper
+
+# ── Ollama: OpenAI Codec (OpenAI-compatible /v1 endpoint) ────────────────────
+# Ollama exposes /v1 natively — use openai package to talk to it like OpenAI:
+# from openai import OpenAI
+# client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+openai>=1.0.0                     # OpenAI Codec for Ollama /v1
+
+# ── Anthropic Claude (OpenClaw SDK) ──────────────────────────────────────────
+anthropic>=0.25.0                 # Anthropic Python SDK
+
+# ── Export ────────────────────────────────────────────────────────────────────
+reportlab>=4.0.0                  # PDF generation (Latin-1 safe, emoji stripped)
+Markdown>=3.5.0                   # HTML export (markdown -> html)
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+redis>=5.0.0
+
+# ── Authentication ────────────────────────────────────────────────────────────
+PyJWT>=2.8.0
+passlib[bcrypt]>=1.7.4
+httpx>=0.27.0
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+plotly>=5.22.0
+pandas>=2.2.0
+
+# ── API Server ────────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+tenacity>=8.3.0
+structlog>=24.2.0
