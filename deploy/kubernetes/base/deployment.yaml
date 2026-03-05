@@ -1,0 +1,332 @@
+---
+# ── Namespace ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: caterya
+  labels:
+    app: caterya-enterprise
+
+---
+# ── ConfigMap ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caterya-config
+  namespace: caterya
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  OLLAMA_BASE_URL: "http://ollama-service:11434"
+  JWT_ALGORITHM: "HS256"
+  JWT_ACCESS_EXPIRE_MINUTES: "60"
+
+---
+# ── Secret (populate via external-secrets or kubectl create secret) ────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: caterya-secrets
+  namespace: caterya
+type: Opaque
+stringData:
+  DATABASE_URL:        "postgresql://caterya:CHANGE_ME@postgres-service:5432/caterya"
+  REDIS_URL:           "redis://:CHANGE_ME@redis-service:6379/0"
+  JWT_SECRET_KEY:      "CHANGE_ME_32_char_random_string"
+  GROQ_API_KEY:        ""
+  OPENROUTER_API_KEY:  ""
+  TOGETHER_API_KEY:    ""
+  FIREWORKS_API_KEY:   ""
+
+---
+# ── ServiceAccount ─────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: caterya-sa
+  namespace: caterya
+  annotations: {}  # Add IRSA annotation for AWS EKS if needed
+
+---
+# ── App Deployment ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caterya-app
+  namespace: caterya
+  labels:
+    app: caterya-app
+    version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: caterya-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: caterya-app
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8501"
+    spec:
+      serviceAccountName: caterya-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: caterya-app
+          image: cateryatech/caterya-enterprise:latest
+          ports:
+            - containerPort: 8501
+          envFrom:
+            - configMapRef:
+                name: caterya-config
+            - secretRef:
+                name: caterya-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+
+---
+# ── API Deployment ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caterya-api
+  namespace: caterya
+  labels:
+    app: caterya-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: caterya-api
+  template:
+    metadata:
+      labels:
+        app: caterya-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      serviceAccountName: caterya-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: caterya-api
+          image: cateryatech/caterya-enterprise:latest
+          command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: caterya-config
+            - secretRef:
+                name: caterya-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+
+---
+# ── Services ────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: caterya-app-service
+  namespace: caterya
+spec:
+  selector:
+    app: caterya-app
+  ports:
+    - port: 8501
+      targetPort: 8501
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caterya-api-service
+  namespace: caterya
+spec:
+  selector:
+    app: caterya-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# ── HorizontalPodAutoscaler ─────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: caterya-api-hpa
+  namespace: caterya
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: caterya-api
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+
+---
+# ── PodDisruptionBudget ─────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: caterya-api-pdb
+  namespace: caterya
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: caterya-api
+
+---
+# ── Ingress ─────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: caterya-ingress
+  namespace: caterya
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  tls:
+    - hosts:
+        - api.caterya.tech
+        - app.caterya.tech
+      secretName: caterya-tls
+  rules:
+    - host: api.caterya.tech
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: caterya-api-service
+                port:
+                  number: 8000
+    - host: app.caterya.tech
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: caterya-app-service
+                port:
+                  number: 8501
+
+---
+# ── NetworkPolicy ─────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: caterya-network-policy
+  namespace: caterya
+spec:
+  podSelector:
+    matchLabels:
+      app: caterya-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: nginx-ingress
+      ports:
+        - port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+    - ports:  # Allow outbound HTTPS for LLM providers
+        - port: 443

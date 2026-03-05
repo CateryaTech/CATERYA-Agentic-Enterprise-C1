@@ -1,0 +1,374 @@
+openapi: "3.1.0"
+info:
+  title: CATERYA Enterprise API
+  description: |
+    Multi-tenant agentic AI platform with ethical evaluation.
+    
+    **Authentication**: Bearer JWT — obtain via `/auth/login`
+    
+    **COS Score**: All workflow endpoints return `cos_result.cos` (0–1, threshold 0.7)
+    
+    **Rate limits**: Free: 5 req/min · Pro: 100 req/min · Enterprise: unlimited
+  version: "3.0.0"
+  contact:
+    name: Ary HH — CATERYA Tech
+    email: cateryatech@proton.me
+  license:
+    name: Apache 2.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://api.caterya.tech
+    description: Production
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: auth
+    description: Authentication and token management
+  - name: workflow
+    description: Agent pipeline execution
+  - name: evaluate
+    description: Standalone COS evaluation
+  - name: provenance
+    description: Audit trail and ZK proofs
+  - name: tenants
+    description: Multi-tenant management (admin)
+  - name: billing
+    description: Stripe subscription management
+  - name: health
+    description: Health and monitoring
+
+paths:
+
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: "ok"}
+                  version: {type: string, example: "3.0.0"}
+                  timestamp: {type: string, format: date-time}
+
+  /metrics:
+    get:
+      tags: [health]
+      summary: Prometheus metrics
+      security: []
+      responses:
+        "200":
+          description: Prometheus text format
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Login and obtain JWT tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id, email, password]
+              properties:
+                tenant_id: {type: string, example: "acme"}
+                email:     {type: string, format: email}
+                password:  {type: string, format: password}
+      responses:
+        "200":
+          description: Tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+
+  /workflow/run:
+    post:
+      tags: [workflow]
+      summary: Run legacy 3-agent research workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowResult"
+
+  /workflow/saas:
+    post:
+      tags: [workflow]
+      summary: Run full 10-agent SaaS building pipeline
+      description: |
+        Executes the complete pipeline:
+        Requirements → Market → Data → Architect → Frontend → Backend → 
+        Tester → DevOps → Performance → Security → COS Evaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  example: "Build a project management SaaS like Linear"
+                llm_provider:
+                  type: string
+                  enum: [ollama, groq, openrouter, together, fireworks]
+                  default: ollama
+                llm_model:
+                  type: string
+                  default: llama3
+                target_market:
+                  type: string
+                  default: "global"
+                scale:
+                  type: string
+                  default: "startup"
+                backend_framework:
+                  type: string
+                  enum: [fastapi, django]
+                  default: fastapi
+                cos_threshold:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  default: 0.7
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaaSPipelineResult"
+        "403":
+          description: Plan limit exceeded
+
+  /evaluate:
+    post:
+      tags: [evaluate]
+      summary: Standalone COS evaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [output]
+              properties:
+                output:
+                  type: string
+                  description: Text to evaluate
+                explanation:
+                  type: string
+                  description: Agent reasoning explanation (for Interpretability pillar)
+                threshold:
+                  type: number
+                  default: 0.7
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/COSResult"
+
+  /provenance/{session_id}:
+    get:
+      tags: [provenance]
+      summary: Get ProvenanceChain for a session
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: {type: string}
+                  chain: {type: array, items: {type: object}}
+
+  /provenance/{session_id}/zkp:
+    get:
+      tags: [provenance]
+      summary: Generate ZK proof for a session record
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZKProof"
+
+  /tenants/provision:
+    post:
+      tags: [tenants]
+      summary: Provision a new tenant (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_slug, tenant_name, plan]
+              properties:
+                tenant_slug: {type: string, example: "acme-corp"}
+                tenant_name: {type: string, example: "ACME Corporation"}
+                plan:
+                  type: string
+                  enum: [free, pro, enterprise]
+      responses:
+        "201":
+          description: Tenant provisioned
+
+  /billing/checkout:
+    post:
+      tags: [billing]
+      summary: Create Stripe checkout session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan, success_url, cancel_url]
+              properties:
+                plan:       {type: string, enum: [pro, enterprise]}
+                success_url: {type: string, format: uri}
+                cancel_url:  {type: string, format: uri}
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:        {type: string, format: uri}
+                  session_id: {type: string}
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    TokenResponse:
+      type: object
+      properties:
+        access_token:  {type: string}
+        refresh_token: {type: string}
+        token_type:    {type: string, example: "bearer"}
+        expires_in:    {type: integer, example: 3600}
+
+    WorkflowRequest:
+      type: object
+      required: [query]
+      properties:
+        query:        {type: string}
+        llm_provider: {type: string, default: "ollama"}
+        llm_model:    {type: string, default: "llama3"}
+
+    WorkflowResult:
+      type: object
+      properties:
+        session_id:      {type: string}
+        cos_result:      {$ref: "#/components/schemas/COSResult"}
+        pipeline_complete: {type: boolean}
+        provenance_chain: {type: array, items: {type: object}}
+
+    SaaSPipelineResult:
+      allOf:
+        - $ref: "#/components/schemas/WorkflowResult"
+        - type: object
+          properties:
+            requirements_output:  {type: string}
+            architecture_output:  {type: string}
+            frontend_output:      {type: string}
+            backend_output:       {type: string}
+            security_output:      {type: string}
+            stability_index:      {type: number}
+
+    COSResult:
+      type: object
+      properties:
+        evaluation_id: {type: string}
+        cos:           {type: number, minimum: 0, maximum: 1, example: 0.9411}
+        passed:        {type: boolean}
+        timestamp:     {type: string, format: date-time}
+        pillars:
+          type: array
+          items:
+            type: object
+            properties:
+              name:           {type: string}
+              score:          {type: number}
+              weight:         {type: number}
+              weighted_score: {type: number}
+              passed:         {type: boolean}
+
+    ZKProof:
+      type: object
+      properties:
+        merkle_root:          {type: string}
+        record_id_commitment: {type: string}
+        proof_steps:          {type: integer}
+        timestamp_range_proven: {type: boolean}
+        verified:             {type: boolean}
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail: {type: string, example: "Not authenticated"}

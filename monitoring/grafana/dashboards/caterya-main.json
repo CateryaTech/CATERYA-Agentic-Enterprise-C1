@@ -1,0 +1,115 @@
+{
+  "title": "CATERYA Enterprise — Agent Monitoring",
+  "uid": "caterya-main",
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-3h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "COS Score by Tenant",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [{
+        "expr": "caterya_cos_score",
+        "legendFormat": "{{tenant_id}}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {"color": "red",    "value": 0},
+              {"color": "yellow", "value": 0.5},
+              {"color": "green",  "value": 0.7}
+            ]
+          },
+          "min": 0, "max": 1
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Stability Index",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "avg(caterya_stability_index)", "legendFormat": "Stability"}],
+      "fieldConfig": {
+        "defaults": {"min": 0, "max": 1, "thresholds": {"steps": [
+          {"color": "red", "value": 0},
+          {"color": "yellow", "value": 0.5},
+          {"color": "green", "value": 0.7}
+        ]}}
+      }
+    },
+    {
+      "id": 3,
+      "title": "Guardrail Violations/min",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "rate(caterya_guardrail_violations_total[1m])*60"}],
+      "fieldConfig": {
+        "defaults": {"thresholds": {"steps": [
+          {"color": "green", "value": 0},
+          {"color": "yellow", "value": 5},
+          {"color": "red", "value": 20}
+        ]}}
+      }
+    },
+    {
+      "id": 4,
+      "title": "Pipeline Stage Distribution",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "targets": [{"expr": "caterya_pipeline_stage_count", "legendFormat": "{{stage}}"}]
+    },
+    {
+      "id": 5,
+      "title": "Agent Execution Time (P99)",
+      "type": "bargauge",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "targets": [{
+        "expr": "histogram_quantile(0.99, rate(caterya_agent_duration_ms_bucket[5m]))",
+        "legendFormat": "{{agent_name}}"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "Pillar Scores Heatmap",
+      "type": "heatmap",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "targets": [{
+        "expr": "caterya_pillar_score",
+        "legendFormat": "{{pillar}}"
+      }]
+    },
+    {
+      "id": 7,
+      "title": "API Request Rate",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [{"expr": "rate(http_requests_total[5m])", "legendFormat": "{{handler}} {{status}}"}]
+    },
+    {
+      "id": 8,
+      "title": "LLM Provider Errors",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [{"expr": "rate(caterya_llm_errors_total[5m])", "legendFormat": "{{provider}}"}]
+    },
+    {
+      "id": 9,
+      "title": "Active Tenants",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 24},
+      "targets": [{"expr": "count(count by (tenant_id)(caterya_cos_score))"}]
+    },
+    {
+      "id": 10,
+      "title": "COS Pass Rate",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 24},
+      "targets": [{"expr": "avg(caterya_cos_passed)"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}}
+    }
+  ]
+}

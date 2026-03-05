@@ -1,0 +1,103 @@
+groups:
+  - name: caterya.alerts
+    rules:
+
+      # ── COS Degradation ──────────────────────────────────────────────────
+      - alert: COSBelowThreshold
+        expr: caterya_cos_score < 0.7
+        for: 5m
+        labels:
+          severity: warning
+          team: ml-ops
+        annotations:
+          summary: "COS score below threshold for tenant {{ $labels.tenant_id }}"
+          description: "COS={{ $value }} has been below 0.7 for 5+ minutes."
+
+      - alert: COSCritical
+        expr: caterya_cos_score < 0.5
+        for: 2m
+        labels:
+          severity: critical
+          team: ml-ops
+        annotations:
+          summary: "Critical COS degradation for tenant {{ $labels.tenant_id }}"
+          description: "COS={{ $value }} critically low. Immediate investigation required."
+
+      # ── Guardrail Violations ─────────────────────────────────────────────
+      - alert: GuardrailViolationSpike
+        expr: rate(caterya_guardrail_violations_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          team: safety
+        annotations:
+          summary: "Guardrail violation spike detected"
+          description: "{{ $value }} violations/s. Possible adversarial attack."
+
+      # ── API Latency ───────────────────────────────────────────────────────
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 API latency above 5 seconds"
+          description: "P99 latency={{ $value }}s on {{ $labels.handler }}"
+
+      # ── Error Rate ────────────────────────────────────────────────────────
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Error rate above 5%"
+          description: "Error rate={{ $value }} on {{ $labels.handler }}"
+
+      # ── LLM Failures ─────────────────────────────────────────────────────
+      - alert: LLMFailureRate
+        expr: rate(caterya_llm_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "LLM provider failures elevated"
+          description: "{{ $value }} LLM errors/s. Check provider status."
+
+      # ── Database ──────────────────────────────────────────────────────────
+      - alert: PostgreSQLDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+
+      - alert: PostgreSQLSlowQueries
+        expr: rate(pg_stat_activity_count{state="active"}[5m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL high active connection count"
+
+      # ── Redis ──────────────────────────────────────────────────────────────
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down — workflow state persistence affected"
+
+      # ── Stability Index (Robustness) ────────────────────────────────────
+      - alert: StabilityIndexLow
+        expr: caterya_stability_index < 0.7
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-ops
+        annotations:
+          summary: "Agent stability index below threshold"
+          description: "Stability={{ $value }} for agent {{ $labels.agent_name }}"
